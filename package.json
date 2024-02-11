@@ -1,0 +1,13 @@
+{
+  "name": "Wordsanity",
+  "version": "0.1.0",
+  "private": true,
+  "main": "index.js",
+  "license": "MIT",
+  "author": "Sunjay Armstead",
+  "keywords": [
+    "sanity",
+    "wordpress"
+  ],
+  "packageManager": "yarn@4.1.0"
+}
