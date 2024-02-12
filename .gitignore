@@ -13,7 +13,6 @@ yarn-error.log*
 # dependencies
 /node_modules
 /.pnp
-.pnp.js
-.pnp.cjs
+.pnp*
 .yarn/install-state.gz
 .nvmrc
