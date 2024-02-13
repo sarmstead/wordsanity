@@ -1,4 +1,7 @@
 const { createClient } = require("@sanity/client");
+const fs = require("node:fs");
+const https = require("https");
+
 const client = createClient({
   projectId: process.env.SANITY_PROJECT_ID,
   dataset: process.env.SANITY_DATASET,
@@ -7,48 +10,32 @@ const client = createClient({
   token: process.env.SANITY_TOKEN,
 });
 
-// Expected payload for client.create
-const params = {
-  _type: "journal",
-  metaDescription:
-    "Imagine an undistracted news experience. No ads, no photos, no videos—just text. Now picture multiple text-only sources in one place. This is Abate.",
-  title: "From the API",
-  slug: { _type: "slug", current: "from-the-api" },
-  publishDate: "2024-02-12T01:59:51.023Z",
-  body: "Foo bar",
-  authors: [
-    {
-      _type: "reference",
-      _ref: "de711167-b03f-4bde-928b-a93bc315b13d",
-      _key: "85a1bef0f627",
-    },
-  ],
-  categories: [
-    {
-      _type: "reference",
-      _ref: "19f18130-1579-4c63-a956-6433ae6217a8",
-      _key: "8209d16ed346",
-    },
-  ],
-  featuredImage: {
-    _type: "image",
-    asset: {
-      _ref: "image-0463ad48b23523b66a11fd0e2807a945039c11fb-1280x853-jpg",
-      _type: "reference",
-    },
-  },
-};
-client
-  .create(params)
-  .then((data) => console.log(data))
-  .catch(console.error);
+const tempDir = "./tmp/";
 
-// STEPS TO ADD BLOGS TO SANITY
-// (1) Create the image asset (https://www.sanity.io/docs/assets)
-// - You'll need to pull down the asset from WordPress using fetch(), and the createReadStream with that data?
-// - Returned _id property is the featuredImage.asset["_ref"] value
-// (2)Create the journal document
-// - If the payload from WordPress returns a category of "journal" do this, if it returns "creatmoteo" do that, etc.
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+const createTmpFile = (imageUrl, filename) =>
+  new Promise((resolve, reject) => {
+    if (!fs.existsSync(tempDir)) {
+      fs.mkdirSync(tempDir);
+    }
+
+    const imageName = tempDir + filename;
+    const file = fs.createWriteStream(imageName);
+    https
+      .get(imageUrl, (response) => {
+        response.pipe(file);
+
+        file.on("finish", () => {
+          file.close();
+          resolve(imageName);
+        });
+      })
+      .on("error", (err) => {
+        fs.unlink(imageName);
+        reject(`Error downloading image: ${err.message}`);
+      });
+  });
 
 fetch(`${process.env.WORDPRESS_BASE}/wp-json/wp/v2/posts?per_page=100`)
   .then((response) => response.json())
@@ -78,6 +65,67 @@ fetch(`${process.env.WORDPRESS_BASE}/wp-json/wp/v2/posts?per_page=100`)
     });
   })
   .then((decoratedArray) => {
-    // console.log(decoratedArray);
-    return decoratedArray;
+    decoratedArray.forEach((blog, index) => {
+      wait(index * 15000).then(() => {
+        if (blog.featuredImage) {
+          createTmpFile(blog.featuredImage[0].url, blog.title).then((file) => {
+            client.assets
+              .upload("image", fs.createReadStream(file), {
+                filename: blog.title,
+              })
+              .then((image) => {
+                const params = {
+                  _type: "journal",
+                  metaDescription: blog.metaDescription,
+                  title: blog.title,
+                  slug: { _type: "slug", current: blog.slug },
+                  publishDate: blog.date,
+                  body: blog.body,
+                  authors: [
+                    {
+                      _type: "reference",
+                      _ref: process.env.SANITY_MAIN_AUTHOR_ID,
+                      _key: process.env.SANITY_MAIN_AUTHOR_KEY,
+                    },
+                  ],
+                  categories: [
+                    {
+                      _type: "reference",
+                      _ref:
+                        blog.category.toLowerCase() === "journal"
+                          ? process.env.SANITY_CATEGORY_JOURNAL_ID
+                          : process.env.SANITY_CATEGORY_CREATMOTEO_ID,
+                      _key:
+                        blog.category.toLowerCase() === "journal"
+                          ? process.env.SANITY_CATEGORY_JOURNAL_KEY
+                          : process.env.SANITY_CATEGORY_CREATMOTEO_KEY,
+                    },
+                  ],
+                  featuredImage: {
+                    _type: "image",
+                    asset: {
+                      _ref: image["_id"],
+                      _type: "reference",
+                    },
+                  },
+                };
+
+                client
+                  .create(params)
+                  .then(() => {
+                    fs.rm(tempDir, { recursive: true, force: true }, (err) => {
+                      if (err) {
+                        throw err;
+                      }
+                    });
+                  })
+                  .catch(console.error);
+              })
+              .catch((error) => console.error(error));
+          });
+        }
+
+        console.log(`${blog.title} does not have a featured image`);
+      });
+    });
   });
